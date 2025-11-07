@@ -384,7 +384,3 @@ if page == "🌐 Macro":
             st.info("Sem dados ou OpenBB indisponível.")
 
 st.caption("© Athena – Demo educacional. Não constitui recomendação de investimento.")
-```
-
----
-

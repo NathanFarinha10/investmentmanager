@@ -5,24 +5,26 @@ import os  # Importar os
 
 # --- Workaround para Permissão do Streamlit Cloud ---
 # O Streamlit Cloud tem um sistema de ficheiros read-only, mas /tmp é gravável.
-# O OpenBB SDK (e possivelmente as suas dependências) tentam escrever ficheiros
-# (config, cache, locks) no arranque.
-# Vamos criar diretórios graváveis e definir variáveis de ambiente para
-# redirecionar todas as operações de escrita para /tmp.
-
-# 1. Criar diretórios graváveis
+#
+# CAUSA-RAIZ DO ERRO [Errno 13]:
+# O OpenBB tenta criar um '.build.lock' dentro da sua própria pasta de instalação
+# (em site-packages), que é read-only.
+#
+# SOLUÇÃO:
+# 1. Desativar o processo de "auto-build" na importação:
+os.environ["OPENBB_BUILD_ENABLED"] = "false"
+#
+# 2. Redirecionar todo o cache/config de RUNTIME para /tmp (que é gravável):
 base_dir = "/tmp/streamlit_workaround"
 data_dir = os.path.join(base_dir, "openbb_data")
 cache_dir = os.path.join(base_dir, "cache")
 config_dir = os.path.join(base_dir, "config")
-mpl_dir = os.path.join(base_dir, "mpl") # Para Matplotlib, uma dependência comum
+mpl_dir = os.path.join(base_dir, "mpl") # Para Matplotlib
 
 for dir_path in [data_dir, cache_dir, config_dir, mpl_dir]:
     if not os.path.exists(dir_path):
-        # exist_ok=True é seguro caso o diretório já exista
         os.makedirs(dir_path, exist_ok=True)
 
-# 2. Definir as variáveis de ambiente ANTES de importar o openbb
 os.environ["OPENBB_USER_DATA_DIRECTORY"] = data_dir
 os.environ["XDG_CACHE_HOME"] = cache_dir     # Padrão XDG para cache
 os.environ["XDG_CONFIG_HOME"] = config_dir  # Padrão XDG para config
@@ -42,6 +44,7 @@ except Exception as e:
         Isto é provavelmente o erro de permissão do Streamlit Cloud.
 
         **Variáveis de Ambiente Definidas:**
+        - `OPENBB_BUILD_ENABLED`: `{os.environ.get('OPENBB_BUILD_ENABLED')}` (Esta é a nova correção)
         - `OPENBB_USER_DATA_DIRECTORY`: `{os.environ.get('OPENBB_USER_DATA_DIRECTORY')}`
         - `XDG_CACHE_HOME`: `{os.environ.get('XDG_CACHE_HOME')}`
         - `XDG_CONFIG_HOME`: `{os.environ.get('XDG_CONFIG_HOME')}`

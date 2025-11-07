@@ -1,6 +1,15 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import os  # <-- Adicione esta linha
+
+# --- Workaround para Permissão do Streamlit Cloud ---
+# O OpenBB SDK tenta escrever em um diretório read-only no Streamlit Cloud.
+# Definimos o diretório de dados do usuário para /tmp, que é gravável.
+# Isso DEVE vir ANTES de 'from openbb import obb'
+os.environ["OPENBB_USER_DATA_DIRECTORY"] = "/tmp"
+# --- Fim do Workaround ---
+
 from openbb import obb
 from datetime import date, timedelta
 

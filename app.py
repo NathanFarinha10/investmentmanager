@@ -3,53 +3,22 @@ import pandas as pd
 import plotly.express as px
 import os  # Importar os
 
-# --- Workaround para Permissão do Streamlit Cloud ---
-# O Streamlit Cloud tem um sistema de ficheiros read-only, mas /tmp é gravável.
-#
-# CAUSA-RAIZ DO ERRO [Errno 13]:
-# O OpenBB tenta criar um '.build.lock' dentro da sua própria pasta de instalação
-# (em site-packages), que é read-only.
-#
-# SOLUÇÃO:
-# 1. Desativar o processo de "auto-build" na importação:
-os.environ["OPENBB_BUILD_ENABLED"] = "false"
-#
-# 2. Redirecionar todo o cache/config de RUNTIME para /tmp (que é gravável):
-base_dir = "/tmp/streamlit_workaround"
-data_dir = os.path.join(base_dir, "openbb_data")
-cache_dir = os.path.join(base_dir, "cache")
-config_dir = os.path.join(base_dir, "config")
-mpl_dir = os.path.join(base_dir, "mpl") # Para Matplotlib
+# NOTA: O workaround de permissão (OPENBB_BUILD_ENABLED="false")
+# foi movido para as "Secrets" nas definições do Streamlit Cloud
+# para garantir que é executado antes da importação.
 
-for dir_path in [data_dir, cache_dir, config_dir, mpl_dir]:
-    if not os.path.exists(dir_path):
-        os.makedirs(dir_path, exist_ok=True)
-
-os.environ["OPENBB_USER_DATA_DIRECTORY"] = data_dir
-os.environ["XDG_CACHE_HOME"] = cache_dir     # Padrão XDG para cache
-os.environ["XDG_CONFIG_HOME"] = config_dir  # Padrão XDG para config
-os.environ["MPLCONFIGDIR"] = mpl_dir      # Específico do Matplotlib
-os.environ["HOME"] = base_dir               # "Catch-all" para libs que usam ~/
-# --- Fim do Workaround ---
-
-# Adicionar um try/except para depurar melhor caso falhe novamente
+# Adicionar um try/except para depurar
 try:
-    from openbb import obb # <-- Importação ocorre DEPOIS da correção
+    from openbb import obb # <-- Importação
 except Exception as e:
     # Se a importação falhar, mostra uma página de erro detalhada
     st.set_page_config(layout="centered")
     st.title("Erro na Inicialização do OpenBB Fatal")
     st.error(f"""
         Ocorreu um erro crítico ao tentar importar a biblioteca OpenBB.
-        Isto é provavelmente o erro de permissão do Streamlit Cloud.
 
-        **Variáveis de Ambiente Definidas:**
-        - `OPENBB_BUILD_ENABLED`: `{os.environ.get('OPENBB_BUILD_ENABLED')}` (Esta é a nova correção)
-        - `OPENBB_USER_DATA_DIRECTORY`: `{os.environ.get('OPENBB_USER_DATA_DIRECTORY')}`
-        - `XDG_CACHE_HOME`: `{os.environ.get('XDG_CACHE_HOME')}`
-        - `XDG_CONFIG_HOME`: `{os.environ.get('XDG_CONFIG_HOME')}`
-        - `MPLCONFIGDIR`: `{os.environ.get('MPLCONFIGDIR')}`
-        - `HOME`: `{os.environ.get('HOME')}`
+        **Variável de Ambiente (Verifique as Secrets):**
+        - `OPENBB_BUILD_ENABLED`: Deveria ser "false"
 
         **Erro Detalhado:**
         ```

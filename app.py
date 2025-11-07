@@ -1,184 +1,184 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import os  # <-- Adicione esta linha
+import os  # Importar os
 
-data_dir = "/tmp/openbb_data"
-if not os.path.exists(data_dir):
-    os.makedirs(data_dir)
+# --- Workaround para Permissão do Streamlit Cloud ---
+# O Streamlit Cloud tem um sistema de ficheiros read-only, mas /tmp é gravável.
+# O OpenBB SDK (e possivelmente as suas dependências) tentam escrever ficheiros
+# (config, cache, locks) no arranque.
+# Vamos criar diretórios graváveis e definir variáveis de ambiente para
+# redirecionar todas as operações de escrita para /tmp.
 
+# 1. Criar diretórios graváveis
+base_dir = "/tmp/streamlit_workaround"
+data_dir = os.path.join(base_dir, "openbb_data")
+cache_dir = os.path.join(base_dir, "cache")
+config_dir = os.path.join(base_dir, "config")
+mpl_dir = os.path.join(base_dir, "mpl") # Para Matplotlib, uma dependência comum
+
+for dir_path in [data_dir, cache_dir, config_dir, mpl_dir]:
+    if not os.path.exists(dir_path):
+        # exist_ok=True é seguro caso o diretório já exista
+        os.makedirs(dir_path, exist_ok=True)
+
+# 2. Definir as variáveis de ambiente ANTES de importar o openbb
 os.environ["OPENBB_USER_DATA_DIRECTORY"] = data_dir
+os.environ["XDG_CACHE_HOME"] = cache_dir     # Padrão XDG para cache
+os.environ["XDG_CONFIG_HOME"] = config_dir  # Padrão XDG para config
+os.environ["MPLCONFIGDIR"] = mpl_dir      # Específico do Matplotlib
+os.environ["HOME"] = base_dir               # "Catch-all" para libs que usam ~/
+# --- Fim do Workaround ---
 
-from openbb import obb
+# Adicionar um try/except para depurar melhor caso falhe novamente
+try:
+    from openbb import obb # <-- Importação ocorre DEPOIS da correção
+except Exception as e:
+    # Se a importação falhar, mostra uma página de erro detalhada
+    st.set_page_config(layout="centered")
+    st.title("Erro na Inicialização do OpenBB Fatal")
+    st.error(f"""
+        Ocorreu um erro crítico ao tentar importar a biblioteca OpenBB.
+        Isto é provavelmente o erro de permissão do Streamlit Cloud.
+
+        **Variáveis de Ambiente Definidas:**
+        - `OPENBB_USER_DATA_DIRECTORY`: `{os.environ.get('OPENBB_USER_DATA_DIRECTORY')}`
+        - `XDG_CACHE_HOME`: `{os.environ.get('XDG_CACHE_HOME')}`
+        - `XDG_CONFIG_HOME`: `{os.environ.get('XDG_CONFIG_HOME')}`
+        - `MPLCONFIGDIR`: `{os.environ.get('MPLCONFIGDIR')}`
+        - `HOME`: `{os.environ.get('HOME')}`
+
+        **Erro Detalhado:**
+        ```
+        {e}
+        ```
+    """)
+    st.stop()  # Interrompe a execução se a importação falhar
+
 from datetime import date, timedelta
 
 # --- Configuração da Página ---
-# Usamos o layout "wide" para preencher a tela
+# Isto só será executado se a importação do openbb for bem-sucedida
 st.set_page_config(
-    page_title="Plataforma de Análise de Investimentos",
+    page_title="Plataforma de Investimentos",
     page_icon="📈",
     layout="wide"
 )
 
-# --- Título Principal ---
-st.title("Plataforma de Análise de Investimentos 📈")
-st.markdown("Desenvolvido com Python, Streamlit e OpenBB SDK")
-
-# --- Barra Lateral (Sidebar) para Entradas do Usuário ---
-st.sidebar.header("Configurações de Análise")
-
-# Input do Ticker
-ticker = st.sidebar.text_input("Digite o Ticker da Ação (ex: AAPL, MSFT, NVDA)", "AAPL").upper()
-
-# Inputs de Data
-# Definimos datas padrão (último ano)
-end_date_default = date.today()
-start_date_default = end_date_default - timedelta(days=365)
-
-start_date = st.sidebar.date_input("Data de Início", start_date_default)
-end_date = st.sidebar.date_input("Data de Fim", end_date_default)
-
-# --- Funções com Cache para Carregar Dados (Otimização do Streamlit) ---
-
-# Cachear os dados evita recarregar da API a cada interação
-@st.cache_data(ttl=3600) # Cache de 1 hora
-def get_stock_data(symbol, start, end):
-    """Busca dados históricos de preços."""
+# --- Funções de Cache ---
+@st.cache_data(ttl=3600)  # Cache de 1 hora
+def get_stock_data(symbol, start_date, end_date):
+    """Busca dados históricos de ações usando o OpenBB."""
     try:
-        # Usamos o yfinance como provedor padrão e gratuito
         data = obb.equity.price.historical(
             symbol=symbol,
-            start_date=str(start),
-            end_date=str(end),
-            provider="yfinance"
+            start_date=start_date.strftime('%Y-%m-%d'),
+            end_date=end_date.strftime('%Y-%m-%d'),
+            provider="yfinance"  # Usar o provedor yfinance
         ).to_df()
         return data
     except Exception as e:
-        st.error(f"Erro ao buscar dados de preço para {symbol}: {e}")
+        st.error(f"Erro ao buscar dados para {symbol}: {e}")
         return pd.DataFrame()
 
-@st.cache_data(ttl=86400) # Cache de 1 dia
-def get_company_profile(symbol):
-    """Busca informações de perfil da empresa."""
+@st.cache_data(ttl=86400)  # Cache de 24 horas
+def get_company_info(symbol):
+    """Busca informações/perfil da empresa."""
     try:
-        # O provedor yfinance oferece um bom resumo
-        profile = obb.equity.profile.info(symbol=symbol, provider="yfinance").to_df()
-        # Transpomos o DataFrame para facilitar a leitura
-        return profile.transpose()
-    except Exception as e:
-        st.error(f"Erro ao buscar perfil para {symbol}: {e}")
-        return pd.DataFrame()
-
-@st.cache_data(ttl=3600) # Cache de 1 hora
-def get_company_news(symbol):
-    """Busca as últimas notícias da empresa."""
-    try:
-        # yfinance também agrega notícias
-        news = obb.news.company(symbol=symbol, provider="yfinance", limit=20).to_df()
-        return news
-    except Exception as e:
-        st.error(f"Erro ao buscar notícias para {symbol}: {e}")
-        return pd.DataFrame()
-
-@st.cache_data(ttl=86400) # Cache de 1 dia
-def get_income_statement(symbol):
-    """Busca a demonstração de resultados (anual)."""
-    try:
-        income = obb.equity.fundamental.income(
+        info = obb.equity.profile.company(
             symbol=symbol,
-            provider="yfinance",
-            period="annual"
+            provider="yfinance"
         ).to_df()
-        return income
+        return info
     except Exception as e:
-        st.error(f"Erro ao buscar DRE para {symbol}: {e}")
+        st.error(f"Erro ao buscar informações da empresa {symbol}: {e}")
         return pd.DataFrame()
 
-# --- Área Principal da Aplicação ---
+# --- Interface do Usuário (UI) ---
+st.title("Plataforma de Análise de Investimentos 📈")
+st.caption("Desenvolvido com Streamlit e OpenBB SDK")
 
-if ticker:
-    st.header(f"Analisando: {ticker}")
+# --- Barra Lateral (Sidebar) ---
+with st.sidebar:
+    st.header("Configurações")
 
-    try:
-        # Carrega todos os dados necessários
-        price_data = get_stock_data(ticker, start_date, end_date)
-        profile_data = get_company_profile(ticker)
-        news_data = get_company_news(ticker)
-        income_data = get_income_statement(ticker)
+    # Input do Ticker
+    default_tickers = "NVDA, AAPL, MSFT, GOOG"
+    ticker_input = st.text_input("Tickers (separados por vírgula)", default_tickers)
+    symbols = [s.strip().upper() for s in ticker_input.split(',') if s.strip()]
 
-        # Define as abas para organizar a informação
-        tab1, tab2, tab3, tab4 = st.tabs(["Resumo", "Gráfico de Preços", "Fundamentos", "Notícias"])
+    # Seleção de Data
+    st.subheader("Intervalo de Datas")
+    col1, col2 = st.columns(2)
+    with col1:
+        start_date = st.date_input("Data Inicial", date.today() - timedelta(days=365*1))
+    with col2:
+        end_date = st.date_input("Data Final", date.today())
 
-        # --- Aba 1: Resumo ---
-        with tab1:
-            st.subheader("Perfil da Empresa")
-            if not profile_data.empty:
-                # Exibe o resumo do negócio
-                st.write(profile_data.loc['longBusinessSummary'].values[0] if 'longBusinessSummary' in profile_data.index else "Resumo não disponível.")
+    if start_date > end_date:
+        st.error("A data inicial não pode ser posterior à data final.")
+        st.stop()
 
-                st.subheader("Métricas Chave")
-                # Exibe métricas em colunas
-                col1, col2, col3 = st.columns(3)
-                col1.metric("Setor", profile_data.loc['sector'].values[0] if 'sector' in profile_data.index else "N/A")
-                col2.metric("Indústria", profile_data.loc['industry'].values[0] if 'industry' in profile_data.index else "N/A")
-                col3.metric("País", profile_data.loc['country'].values[0] if 'country' in profile_data.index else "N/A")
+# --- Painel Principal (Tabs) ---
+if symbols:
+    # Criar abas para cada ticker selecionado
+    tabs = st.tabs(symbols)
 
-                col4, col5, col6 = st.columns(3)
-                col4.metric("Market Cap", f"${profile_data.loc['marketCap'].values[0]:,}" if 'marketCap' in profile_data.index else "N/A")
-                col5.metric("P/E Ratio (Fwd)", f"{profile_data.loc['forwardPE'].values[0]:.2f}" if 'forwardPE' in profile_data.index else "N/A")
-                col6.metric("Dividend Yield", f"{profile_data.loc['dividendYield'].values[0] * 100:.2f}%" if 'dividendYield' in profile_data.index and profile_data.loc['dividendYield'].values[0] else "N/A")
+    for i, symbol in enumerate(symbols):
+        with tabs[i]:
+            st.header(f"Análise de {symbol}", divider="rainbow")
 
-                # Exibe o DataFrame transposto com todos os dados do perfil
-                st.dataframe(profile_data, use_container_width=True)
-            else:
-                st.warning("Não foi possível carregar o perfil da empresa.")
+            # Sub-abas para Preço e Informações
+            sub_tab1, sub_tab2 = st.tabs(["📊 Gráfico de Preços", "ℹ️ Informações da Empresa"])
 
-        # --- Aba 2: Gráfico de Preços ---
-        with tab2:
-            st.subheader("Histórico de Preço (Fechamento)")
-            if not price_data.empty:
-                # Cria um gráfico interativo com Plotly
-                fig = px.line(price_data, x=price_data.index, y='close', title=f"Preço de Fechamento de {ticker}")
-                fig.update_layout(xaxis_title="Data", yaxis_title="Preço (USD)")
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.warning("Não foi possível carregar os dados de preço.")
+            # --- Aba 1: Gráfico de Preços ---
+            with sub_tab1:
+                data = get_stock_data(symbol, start_date, end_date)
 
-        # --- Aba 3: Fundamentos ---
-        with tab3:
-            st.subheader("Demonstração de Resultados (Anual)")
-            if not income_data.empty:
-                # Exibe os dados fundamentais
-                st.dataframe(income_data, use_container_width=True)
+                if not data.empty:
+                    st.subheader(f"Histórico de Preços (Close) para {symbol}")
 
-                st.subheader("Receita e Lucro Líquido")
-                # Gráfico de barras para Receita e Lucro
-                if 'total_revenue' in income_data.columns and 'net_income' in income_data.columns:
-                    chart_data = income_data[['total_revenue', 'net_income']].sort_index()
-                    st.bar_chart(chart_data)
+                    # Gráfico Plotly
+                    fig = px.line(
+                        data,
+                        x=data.index,
+                        y="close",
+                        title=f"Preço de Fechamento de {symbol}",
+                        labels={"close": "Preço de Fechamento (USD)", "date": "Data"}
+                    )
+                    fig.update_layout(
+                        template="plotly_white",
+                        xaxis_rangeslider_visible=True,
+                        hovermode="x unified"
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+
+                    # Mostrar dados brutos (opcional)
+                    if st.checkbox(f"Mostrar dados brutos de {symbol}", key=f"data_{symbol}"):
+                        st.dataframe(data.sort_index(ascending=False), use_container_width=True)
                 else:
-                    st.info("Colunas 'total_revenue' ou 'net_income' não encontradas.")
-            else:
-                st.warning("Não foi possível carregar os dados fundamentalistas.")
+                    st.warning(f"Não foi possível carregar dados de preço para {symbol}.")
 
-        # --- Aba 4: Notícias ---
-        with tab4:
-            st.subheader("Últimas Notícias")
-            if not news_data.empty:
-                # Itera sobre as notícias e as exibe
-                for index, row in news_data.iterrows():
-                    st.markdown(f"**[{row['title']}]({row['url']})**")
-                    st.write(f"*{row['publisher_name']} - {pd.to_datetime(row['published_date']).strftime('%d/%m/%Y %H:%M')}*")
-                    # 'text' pode não estar disponível em todos provedores, 'summary' é mais comum
-                    if 'summary' in row and row['summary']:
-                         st.write(row['summary'])
-                    st.divider()
-            else:
-                st.warning("Não foi possível carregar as notícias.")
+            # --- Aba 2: Informações da Empresa ---
+            with sub_tab2:
+                info_df = get_company_info(symbol)
 
-    except Exception as e:
-        st.error(f"Ocorreu um erro geral ao processar o ticker {ticker}: {e}")
-        st.info("Verifique se o ticker está correto ou tente novamente mais tarde.")
+                if not info_df.empty:
+                    st.subheader(f"Perfil de {symbol}")
 
+                    # O .to_df() do 'company' retorna um DataFrame onde o índice é o nome do campo.
+                    # Vamos transpor (T) para facilitar a leitura no Streamlit
+                    st.dataframe(info_df.T, use_container_width=True)
+
+                    # Tentar extrair e mostrar o resumo (longBusinessSummary)
+                    try:
+                        # .loc acessa a linha 'longBusinessSummary', .iloc[0] pega o primeiro valor
+                        summary = info_df.loc['longBusinessSummary'].iloc[0]
+                        st.subheader("Resumo do Negócio")
+                        st.markdown(summary)
+                    except (KeyError, IndexError):
+                        st.info("Resumo do negócio (longBusinessSummary) não disponível.")
+                else:
+                    st.warning(f"Não foi possível carregar informações da empresa {symbol}.")
 else:
-    st.info("Por favor, insira um ticker na barra lateral para começar a análise.")
+    st.info("Por favor, insira um ou mais tickers na barra lateral para começar.")

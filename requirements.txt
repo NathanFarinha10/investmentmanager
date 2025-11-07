@@ -2,3 +2,4 @@ streamlit
 openbb
 pandas
 plotly
+yfinance
